@@ -78,13 +78,42 @@ class PolymarketClient:
             response = requests.get(url, params=params)
             response.raise_for_status()
             prices = response.json()
-            for price in prices:
-                if price.get("token_id") == token_id:
-                    return float(price.get("price", 0))
+            # Handle the response - it might be a list or dict
+            if isinstance(prices, list):
+                for price in prices:
+                    if price.get("token_id") == token_id:
+                        return float(price.get("price", 0))
+            elif isinstance(prices, dict):
+                # Sometimes returns nested structure
+                for key, value in prices.items():
+                    if isinstance(value, list):
+                        for price in value:
+                            if price.get("token_id") == token_id:
+                                return float(price.get("price", 0))
             return None
         except Exception as e:
             logger.error(f"Error getting price: {e}")
             return None
+    
+    def get_market_token_id(self, market: dict) -> Optional[str]:
+        """Extract token ID from market data."""
+        # Try clobTokenIds first (newer API)
+        clob_token_ids = market.get("clobTokenIds")
+        if clob_token_ids:
+            try:
+                import json
+                token_ids = json.loads(clob_token_ids)
+                if token_ids and len(token_ids) > 0:
+                    return token_ids[0]  # Return first token (Yes outcome)
+            except:
+                pass
+        
+        # Try tokens array (older format)
+        tokens = market.get("tokens", [])
+        if tokens and len(tokens) > 0:
+            return tokens[0].get("token_id")
+        
+        return None
     
     def get_order_book(self, token_id: str) -> dict:
         """Get order book for a token."""
@@ -142,9 +171,9 @@ class TradingBot:
     
     async def monitor_market(self, market: dict, duration: int = 60):
         """Monitor a market for price changes."""
-        token_id = market.get("tokens", [{}])[0].get("token_id") if market.get("tokens") else None
+        token_id = self.client.get_market_token_id(market)
         if not token_id:
-            logger.warning("No token ID found for market")
+            logger.warning(f"No token ID found for market: {market.get('question', 'Unknown')}")
             return
         
         question = market.get("question", "Unknown")
