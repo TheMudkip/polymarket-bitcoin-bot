@@ -1,0 +1,9 @@
+{
+  "private_key": "",
+  "paper_trading": true,
+  "bet_size": 10,
+  "threshold": 0.02,
+  "host": "https://clob.polymarket.com",
+  "chain_id": 137,
+  "log_level": "INFO"
+}
