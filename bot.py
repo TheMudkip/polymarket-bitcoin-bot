@@ -25,6 +25,22 @@ logger = logging.getLogger(__name__)
 # API Endpoints
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_HOST = "https://clob.polymarket.com"
+COINGECKO_API = "https://api.coingecko.com/api/v3"
+
+def get_btc_price() -> Optional[float]:
+    """Fetch current Bitcoin price from CoinGecko."""
+    try:
+        resp = requests.get(
+            f"{COINGECKO_API}/simple/price",
+            params={"ids": "bitcoin", "vs_currencies": "usd"},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("bitcoin", {}).get("usd")
+    except Exception as e:
+        logger.warning(f"Failed to get BTC price: {e}")
+    return None
 
 def get_current_market_slug() -> str:
     """Calculate the current 5-min BTC market slug based on system time."""
@@ -246,13 +262,18 @@ class PolymarketBot:
         # Market data cache
         self.market_data = {}
         
+        # BTC price tracking
+        self.btc_price = None
+        self.btc_price_at_interval_start = None
+        
         # Price history for trend tracking
-        self.price_history = []  # list of {'timestamp': ts, 'up_price': float}
+        self.price_history = []  # list of {'timestamp': ts, 'up_price': float, 'btc_price': float}
         
         # Trading state for current interval
         self.traded_this_interval = False
         self.pending_decision = None  # 'BUY_UP', 'BUY_DOWN', or None
         self.confirmation_cycle_count = 0  # Cycles spent in pending state
+        self.interval_count = 0  # Track intervals to skip first one for observation
         
         # Config
         self.confirmation_wait_cycles = 6  # Wait ~1 minute (6 cycles at 10s) before confirming
@@ -439,6 +460,7 @@ class PolymarketBot:
                 self.pending_decision = None
                 self.confirmation_cycle_count = 0
                 self.price_history = []
+                self.btc_price_at_interval_start = None  # Reset BTC price for new interval
                 # Save to config
                 self.config['market_slug'] = next_slug
                 import json
@@ -449,21 +471,38 @@ class PolymarketBot:
                 logger.warning("No next market available")
                 return False
         
+        # Fetch current BTC price
+        self.btc_price = get_btc_price()
+        
+        # Initialize BTC price at start of first interval
+        if self.btc_price_at_interval_start is None:
+            self.btc_price_at_interval_start = self.btc_price
+        
         logger.info(f"Market: {market_data.get('question', '')[:50]}...")
-        logger.info(f"  Up: ${market_data.get('up_price', 0):.4f} | Down: ${market_data.get('down_price', 0):.4f}")
+        logger.info(f"  BTC: ${self.btc_price:,.2f} | Polymarket: Up={market_data.get('up_price', 0)*100:.1f}% | Down={market_data.get('down_price', 0)*100:.1f}%")
         
         # Track price history
         import time
         current_ts = int(time.time())
         up_price = market_data.get('up_price', 0.5)
-        self.price_history.append({'timestamp': current_ts, 'up_price': up_price})
+        self.price_history.append({'timestamp': current_ts, 'up_price': up_price, 'btc_price': self.btc_price})
         
         # Keep only last 3 minutes of history
         self.price_history = [p for p in self.price_history if current_ts - p['timestamp'] < 180]
         
+        # Increment interval count and skip trading on first interval (observation only)
+        self.interval_count += 1
+        observation_mode = self.interval_count <= 1
+        
+        if observation_mode:
+            logger.info(f"OBSERVATION MODE - Interval {self.interval_count}, collecting data only")
+        
         # Check if we already traded this interval
         if self.traded_this_interval:
             logger.info(f"Already traded this interval, skipping")
+            decision = 'NO_TRADE'
+        elif observation_mode:
+            logger.info(f"Skipping trade - observation mode (first interval)")
             decision = 'NO_TRADE'
         else:
             # Heuristic: Buy UP when up_price > 60%, Buy DOWN when up_price < 40%
