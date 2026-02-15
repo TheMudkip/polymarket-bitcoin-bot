@@ -12,8 +12,75 @@ import os
 import sys
 from datetime import datetime
 from typing import Optional
-
 import requests
+
+# ANSI escape codes for terminal UI
+CLEAR_SCREEN = "\033[2J"
+CURSOR_HOME = "\033[H"
+CURSOR_HIDE = "\033[?25l"
+CURSOR_SHOW = "\033[?25h"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+GREEN = "\033[92m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+BLUE = "\033[94m"
+
+
+def draw_dashboard(bot, market_data: dict = None, decision: str = "?"):
+    """Draw a dashboard in the terminal."""
+    # Clear screen and move cursor to top
+    sys.stdout.write(CLEAR_SCREEN + CURSOR_HOME)
+    sys.stdout.flush()
+    
+    # Get current values
+    btc_price = f"${bot.btc_price:,.2f}" if bot.btc_price else "N/A"
+    up_pct = market_data.get('up_price', 0) * 100 if market_data else 0
+    down_pct = market_data.get('down_price', 0) * 100 if market_data else 0
+    
+    # Portfolio info
+    pnl = bot.portfolio.pnl_pct
+    pnl_color = GREEN if pnl >= 0 else RED
+    pnl_str = f"{pnl_color}{pnl:+.2f}%{RESET}"
+    
+    # Decision color
+    dec_color = GREEN if decision == "BUY_UP" else (RED if decision == "BUY_DOWN" else YELLOW)
+    
+    # Status
+    status = "OBSERVING" if bot.interval_count <= 1 else ("WAITING" if bot.traded_this_interval else "ACTIVE")
+    status_color = BLUE if status == "OBSERVING" else (YELLOW if status == "WAITING" else GREEN)
+    
+    lines = [
+        f"{BOLD}══════════════════════════════════════════════════════════════{RESET}",
+        f"  🤖 Polymarket BTC Trading Bot",
+        f"{BOLD}══════════════════════════════════════════════════════════════{RESET}",
+        "",
+        f"  📊 MARKET DATA",
+        f"  {'─' * 60}",
+        f"  BTC Price:    {BOLD}{btc_price}{RESET}",
+        f"  Polymarket:   Up {up_pct:.1f}% | Down {down_pct:.1f}%",
+        f"  Market:       {market_data.get('question', 'N/A')[:50] if market_data else 'N/A'}",
+        f"  Interval:     #{bot.interval_count} | Status: {status_color}{status}{RESET}",
+        "",
+        f"  💰 PORTFOLIO",
+        f"  {'─' * 60}",
+        f"  Value:        ${bot.portfolio.total_value:.2f}",
+        f"  Cash:         ${bot.portfolio.cash:.2f}",
+        f"  P&L:          {pnl_str}",
+        f"  Stop Loss:    {bot.portfolio.stop_loss_pct*100:.0f}% (${bot.portfolio.initial_investment * bot.portfolio.stop_loss_pct:.2f})",
+        "",
+        f"  🎯 DECISION:  {dec_color}{decision}{RESET}",
+        "",
+        f"{BOLD}══════════════════════════════════════════════════════════════{RESET}",
+    ]
+    
+    print("\n".join(lines))
+
+
+def clear_line():
+    """Clear current line."""
+    sys.stdout.write("\033[2K\r")
+    sys.stdout.flush()
 
 # Setup logging
 logging.basicConfig(
@@ -479,8 +546,8 @@ class PolymarketBot:
         if self.btc_price_at_interval_start is None:
             self.btc_price_at_interval_start = self.btc_price
         
-        logger.info(f"Market: {market_data.get('question', '')[:50]}...")
-        logger.info(f"  BTC: {btc_display} | Polymarket: Up={market_data.get('up_price', 0)*100:.1f}% | Down={market_data.get('down_price', 0)*100:.1f}%")
+        # logger.info(f"Market: {market_data.get('question', '')[:50]}...")
+        # logger.info(f"  BTC: {btc_display} | Polymarket: Up={market_data.get('up_price', 0)*100:.1f}% | Down={market_data.get('down_price', 0)*100:.1f}%")
         
         # Track price history
         import time
@@ -495,15 +562,15 @@ class PolymarketBot:
         self.interval_count += 1
         observation_mode = self.interval_count <= 1
         
-        if observation_mode:
-            logger.info(f"OBSERVATION MODE - Interval {self.interval_count}, collecting data only")
+        # if observation_mode:
+        #     logger.info(f"OBSERVATION MODE - Interval {self.interval_count}, collecting data only")
         
         # Check if we already traded this interval
         if self.traded_this_interval:
             logger.info(f"Already traded this interval, skipping")
             decision = 'NO_TRADE'
         elif observation_mode:
-            logger.info(f"Skipping trade - observation mode (first interval)")
+            # logger.info(f"Skipping trade - observation mode (first interval)")
             decision = 'NO_TRADE'
         else:
             # Heuristic: Buy UP when up_price > 60%, Buy DOWN when up_price < 40%
@@ -512,26 +579,26 @@ class PolymarketBot:
                 if self.pending_decision != 'BUY_UP':
                     self.pending_decision = 'BUY_UP'
                     self.confirmation_cycle_count = 1
-                    logger.info(f"Up price {up_price*100:.1f}% > {self.threshold_high*100:.0f}% - waiting for confirmation...")
+                    # logger.info(f"Up price {up_price*100:.1f}% > {self.threshold_high*100:.0f}% - waiting for confirmation...")
                     decision = 'NO_TRADE'
                 elif self.confirmation_cycle_count >= self.confirmation_wait_cycles:
-                    logger.info(f"Confirmed: Up price stayed above {self.threshold_high*100:.0f}% for {self.confirmation_cycle_count} cycles")
+                    logger.info(f"Confirmed BUY_UP")
                     decision = 'BUY_UP'
                 else:
-                    logger.info(f"Waiting for confirmation: {self.confirmation_cycle_count}/{self.confirmation_wait_cycles} cycles")
+                    # logger.info(f"Waiting for confirmation: {self.confirmation_cycle_count}/{self.confirmation_wait_cycles} cycles")
                     self.confirmation_cycle_count += 1
                     decision = 'NO_TRADE'
             elif up_price < self.threshold_low:
                 if self.pending_decision != 'BUY_DOWN':
                     self.pending_decision = 'BUY_DOWN'
                     self.confirmation_cycle_count = 1
-                    logger.info(f"Up price {up_price*100:.1f}% < {self.threshold_low*100:.0f}% - waiting for confirmation...")
+                    # logger.info(f"Up price {up_price*100:.1f}% < {self.threshold_low*100:.0f}% - waiting for confirmation...")
                     decision = 'NO_TRADE'
                 elif self.confirmation_cycle_count >= self.confirmation_wait_cycles:
-                    logger.info(f"Confirmed: Up price stayed below {self.threshold_low*100:.0f}% for {self.confirmation_cycle_count} cycles")
+                    logger.info(f"Confirmed BUY_DOWN")
                     decision = 'BUY_DOWN'
                 else:
-                    logger.info(f"Waiting for confirmation: {self.confirmation_cycle_count}/{self.confirmation_wait_cycles} cycles")
+                    # logger.info(f"Waiting for confirmation: {self.confirmation_cycle_count}/{self.confirmation_wait_cycles} cycles")
                     self.confirmation_cycle_count += 1
                     decision = 'NO_TRADE'
             else:
@@ -539,7 +606,7 @@ class PolymarketBot:
                 self.pending_decision = None
                 self.confirmation_cycle_count = 0
                 decision = 'NO_TRADE'
-                logger.info(f"Price in neutral zone (40-60%), no trade")
+                # logger.info(f"Price in neutral zone (40-60%), no trade")
         
         logger.info(f"Decision: {decision}")
         
@@ -563,31 +630,37 @@ class PolymarketBot:
             success = self.execute_trade('BUY_DOWN', token_id, price, amount)
             if success:
                 self.traded_this_interval = True
-                logger.info(f"Trade executed - won't trade again until next interval")
         
-        logger.info(f"Cycle complete. {str(self.portfolio)}")
+        # Draw dashboard
+        draw_dashboard(self, market_data, decision)
+        
         return True
     
     async def run(self, loop: bool = False, interval: int = 30):
         """Run the bot."""
-        logger.info("Starting Polymarket BTC 5-Min Trading Bot")
+        # Hide cursor
+        sys.stdout.write(CURSOR_HIDE)
+        sys.stdout.flush()
+        
+        print(f"\n{BOLD}Starting Polymarket BTC 5-Min Trading Bot{RESET}")
         
         if self.paper_trading:
-            logger.info("⚠️  PAPER TRADING MODE - No real money at risk")
+            print(f"{YELLOW}⚠️  PAPER TRADING MODE - No real money at risk{RESET}")
         else:
-            logger.info("🔴 LIVE TRADING MODE - Real money at risk!")
+            print(f"{RED}🔴 LIVE TRADING MODE - Real money at risk!{RESET}")
         
-        if self.portfolio.can_trade:
-            logger.info(f"Initial investment: ${self.portfolio.initial_investment:.2f}")
-            logger.info(f"Stop loss: {self.portfolio.stop_loss_pct*100:.0f}% (${self.portfolio.initial_investment * self.portfolio.stop_loss_pct:.2f})")
+        print(f"Initial: ${self.portfolio.initial_investment:.2f} | Stop loss: {self.portfolio.stop_loss_pct*100:.0f}%")
         
         if loop:
             while True:
                 await self.run_cycle()
-                logger.info(f"Waiting {interval}s before next cycle...")
                 await asyncio.sleep(interval)
         else:
             await self.run_cycle()
+        
+        # Show cursor on exit
+        sys.stdout.write(CURSOR_SHOW)
+        sys.stdout.flush()
 
 
 def load_config() -> dict:
