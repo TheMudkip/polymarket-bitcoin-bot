@@ -165,11 +165,11 @@ Your decision:"""
                     return 'NO_TRADE'
             else:
                 logger.error(f"Gemini API error: {response.status_code}")
-                return 'NO_TRADE'
+                raise Exception(f"Gemini API error: {response.status_code}")
                 
         except Exception as e:
             logger.error(f"Error calling Gemini: {e}")
-            return 'NO_TRADE'
+            raise
 
 
 class PolymarketBot:
@@ -196,6 +196,31 @@ class PolymarketBot:
         
         # Market data cache
         self.market_data = {}
+    
+    def get_next_market_slug(self, current_slug: str) -> str:
+        """Calculate next 5-min BTC market slug."""
+        import calendar
+        from datetime import datetime, timedelta
+        
+        # Extract timestamp from slug (e.g., btc-updown-5m-1771116300)
+        if 'btc-updown-5m-' in current_slug:
+            try:
+                current_ts = int(current_slug.split('-')[-1])
+                # Add 300 seconds (5 minutes)
+                next_ts = current_ts + 300
+                return f"btc-updown-5m-{next_ts}"
+            except:
+                pass
+        
+        # Fallback: calculate from current time
+        now = datetime.utcnow()
+        minutes = now.minute
+        seconds = now.second
+        # Round up to next 5-min
+        next_5min = now + timedelta(seconds=(300 - ((minutes * 60 + seconds) % 300)))
+        next_5min = next_5min.replace(second=0, microsecond=0)
+        next_ts = int(calendar.timegm(next_5min.timetuple()))
+        return f"btc-updown-5m-{next_ts}"
         
     def get_market_data(self) -> dict:
         """Fetch current market data."""
@@ -210,25 +235,58 @@ class PolymarketBot:
             
             market = markets[0]
             
-            # Parse token IDs
+            # Parse token IDs - use the actual field from API
             import json
             token_ids = json.loads(market.get('clobTokenIds', '[]'))
             outcome_prices = json.loads(market.get('outcomePrices', '[]'))
             
+            # Use best bid/ask for more current prices
+            best_bid = float(market.get('bestBid', 0))
+            best_ask = float(market.get('bestAsk', 0))
+            
+            # Use mid price or best bid/ask if available
+            if best_bid > 0 and best_ask > 0:
+                up_price = (best_bid + best_ask) / 2
+            elif len(outcome_prices) > 0:
+                up_price = float(outcome_prices[0])
+            else:
+                up_price = 0.5
+                
+            down_price = 1 - up_price
+            
+            # Check if market is closed based on endDate (more reliable than API)
+            end_date = market.get('endDate', '')
+            from datetime import datetime, timezone
+            is_closed_by_time = False
+            if end_date:
+                try:
+                    end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                    now = datetime.now(timezone.utc)
+                    is_closed_by_time = now >= end_dt
+                    logger.info(f"Market end: {end_dt}, now: {now}, closed_by_time: {is_closed_by_time}")
+                except Exception as e:
+                    logger.error(f"Error parsing endDate: {e}")
+            
+            is_closed = market.get('closed', True) or is_closed_by_time
+            
             up_token = token_ids[0] if len(token_ids) > 0 else None
             down_token = token_ids[1] if len(token_ids) > 1 else None
+            
+            logger.info(f"Token IDs: up={up_token}, down={down_token}")
+            logger.info(f"Prices: bestBid={best_bid}, bestAsk={best_ask}, using up_price={up_price:.4f}")
             
             return {
                 'question': market.get('question', ''),
                 'slug': market.get('slug', ''),
                 'up_token': up_token,
                 'down_token': down_token,
-                'up_price': float(outcome_prices[0]) if len(outcome_prices) > 0 else 0.5,
-                'down_price': float(outcome_prices[1]) if len(outcome_prices) > 1 else 0.5,
+                'up_price': up_price,
+                'down_price': down_price,
                 'volume': float(market.get('volumeNum', 0)),
                 'liquidity': float(market.get('liquidityNum', 0)),
                 'active': market.get('active', False),
-                'closed': market.get('closed', True)
+                'closed': is_closed,
+                'end_date': end_date
             }
             
         except Exception as e:
@@ -304,8 +362,21 @@ class PolymarketBot:
             return False
         
         if market_data.get('closed'):
-            logger.warning("Market is closed")
-            return False
+            # Market is closed - try to advance to next timestamp
+            logger.warning("Market is closed, advancing to next 5-min window...")
+            next_slug = self.get_next_market_slug(self.market_slug)
+            if next_slug:
+                logger.info(f"Switching to: {next_slug}")
+                self.market_slug = next_slug
+                # Save to config
+                self.config['market_slug'] = next_slug
+                import json
+                with open('config.json', 'w') as f:
+                    json.dump(self.config, f, indent=2)
+                return True
+            else:
+                logger.warning("No next market available")
+                return False
         
         logger.info(f"Market: {market_data.get('question', '')[:50]}...")
         logger.info(f"  Up: ${market_data.get('up_price', 0):.4f} | Down: ${market_data.get('down_price', 0):.4f}")
@@ -318,11 +389,11 @@ class PolymarketBot:
                 logger.info(f"AI Decision: {decision}")
             except Exception as e:
                 logger.warning(f"AI error, using heuristic: {e}")
-                # Fallback heuristic
+                # Fallback heuristic ( widened from 42/58 to 40/60)
                 up_price = market_data.get('up_price', 0.5)
-                if up_price < 0.42:
+                if up_price < 0.40:
                     decision = 'BUY_UP'
-                elif up_price > 0.58:
+                elif up_price > 0.60:
                     decision = 'BUY_DOWN'
                 else:
                     decision = 'NO_TRADE'
