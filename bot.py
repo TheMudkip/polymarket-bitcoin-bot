@@ -252,8 +252,9 @@ class PolymarketBot:
     def get_market_data(self) -> dict:
         """Fetch current market data."""
         try:
-            # Get market info
-            resp = requests.get(f"{GAMMA_API}/markets?slug={self.market_slug}")
+            # Get market info (with cache-busting timestamp)
+            import time
+            resp = requests.get(f"{GAMMA_API}/markets?slug={self.market_slug}&_={int(time.time())}")
             markets = resp.json()
             
             if not markets:
