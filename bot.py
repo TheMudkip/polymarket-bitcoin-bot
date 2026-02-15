@@ -267,17 +267,21 @@ class PolymarketBot:
             token_ids = json.loads(market.get('clobTokenIds', '[]'))
             outcome_prices = json.loads(market.get('outcomePrices', '[]'))
             
-            # Use best bid/ask for more current prices
+            # Get best bid/ask for reference
             best_bid = float(market.get('bestBid', 0))
             best_ask = float(market.get('bestAsk', 0))
             
-            # Use mid price or best bid/ask if available
-            if best_bid > 0 and best_ask > 0:
-                up_price = (best_bid + best_ask) / 2
-            elif len(outcome_prices) > 0:
+            # Use outcomePrices as the primary probability (more accurate)
+            if len(outcome_prices) > 0:
                 up_price = float(outcome_prices[0])
+                logger.info(f"Outcome prices from API: Up={float(outcome_prices[0])*100:.1f}%, Down={float(outcome_prices[1])*100:.1f}%")
+            elif best_bid > 0 and best_ask > 0:
+                # Fallback to best bid/ask
+                up_price = (best_bid + best_ask) / 2
+                logger.info(f"Prices from bestBid/Ask: Up={up_price*100:.1f}%")
             else:
                 up_price = 0.5
+                logger.warning("No price data available, defaulting to 50%")
                 
             down_price = 1 - up_price
             
@@ -300,7 +304,7 @@ class PolymarketBot:
             down_token = token_ids[1] if len(token_ids) > 1 else None
             
             logger.info(f"Token IDs: up={up_token}, down={down_token}")
-            logger.info(f"Prices: bestBid={best_bid}, bestAsk={best_ask}, using up_price={up_price:.4f}")
+            logger.info(f"Prices: Up={up_price*100:.1f}% | Down={down_price*100:.1f}% (bestBid={best_bid}, bestAsk={best_ask})")
             
             return {
                 'question': market.get('question', ''),
