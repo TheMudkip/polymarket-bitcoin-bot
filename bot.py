@@ -112,7 +112,7 @@ class GeminiAI:
     # Model configurations - try Pro first, then Flash
     MODELS = [
         {"name": "gemini-2.5-pro", "url_template": "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"},
-        {"name": "gemini-2.0-flash", "url_template": "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"},
+        {"name": "gemini-2.5-flash", "url_template": "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"},
     ]
     
     def __init__(self, api_key: str):
