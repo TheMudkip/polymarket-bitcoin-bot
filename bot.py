@@ -473,13 +473,14 @@ class PolymarketBot:
         
         # Fetch current BTC price
         self.btc_price = get_btc_price()
+        btc_display = f"\${self.btc_price:,.2f}" if self.btc_price else "N/A"
         
         # Initialize BTC price at start of first interval
         if self.btc_price_at_interval_start is None:
             self.btc_price_at_interval_start = self.btc_price
         
         logger.info(f"Market: {market_data.get('question', '')[:50]}...")
-        logger.info(f"  BTC: ${self.btc_price:,.2f} | Polymarket: Up={market_data.get('up_price', 0)*100:.1f}% | Down={market_data.get('down_price', 0)*100:.1f}%")
+        logger.info(f"  BTC: {btc_display} | Polymarket: Up={market_data.get('up_price', 0)*100:.1f}% | Down={market_data.get('down_price', 0)*100:.1f}%")
         
         # Track price history
         import time
