@@ -243,14 +243,6 @@ class PolymarketBot:
         stop_loss = config.get('stop_loss_pct', 0.95)
         self.portfolio = Portfolio(initial, stop_loss)
         
-        # Initialize AI
-        gemini_key = config.get('gemini_api_key', '')
-        if gemini_key:
-            self.ai = GeminiAI(gemini_key)
-        else:
-            self.ai = None
-            logger.warning("No Gemini API key - AI decisions disabled")
-        
         # Market data cache
         self.market_data = {}
     
@@ -443,32 +435,15 @@ class PolymarketBot:
         logger.info(f"Market: {market_data.get('question', '')[:50]}...")
         logger.info(f"  Up: ${market_data.get('up_price', 0):.4f} | Down: ${market_data.get('down_price', 0):.4f}")
         
-        # Get AI decision if available
-        if self.ai:
-            # Try Gemini with fallback to heuristic
-            try:
-                decision = self.ai.decide(market_data, self.portfolio)
-                logger.info(f"AI Decision: {decision}")
-            except Exception as e:
-                logger.warning(f"AI error, using heuristic: {e}")
-                # Fallback heuristic ( widened from 42/58 to 40/60)
-                up_price = market_data.get('up_price', 0.5)
-                if up_price < 0.40:
-                    decision = 'BUY_UP'
-                elif up_price > 0.60:
-                    decision = 'BUY_DOWN'
-                else:
-                    decision = 'NO_TRADE'
-                logger.info(f"Heuristic Decision: {decision}")
+        # Use heuristic for trading decision (AI disabled)
+        up_price = market_data.get('up_price', 0.5)
+        if up_price < 0.40:
+            decision = 'BUY_UP'
+        elif up_price > 0.60:
+            decision = 'BUY_DOWN'
         else:
-            # Simple heuristic if no AI
-            if market_data.get('up_price', 0.5) < 0.45:
-                decision = 'BUY_UP'
-            elif market_data.get('down_price', 0.5) < 0.45:
-                decision = 'BUY_DOWN'
-            else:
-                decision = 'NO_TRADE'
-            logger.info(f"Decision (heuristic): {decision}")
+            decision = 'NO_TRADE'
+        logger.info(f"Decision (heuristic): {decision}")
         
         # Execute trade
         if decision == 'BUY_UP':
