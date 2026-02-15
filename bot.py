@@ -109,9 +109,8 @@ class Portfolio:
 class GeminiAI:
     """Gemini-powered decision maker."""
     
-    # Model configurations - try Pro first, then Flash
+    # Model configurations - gemini-2.5-flash free tier: 5 requests/min
     MODELS = [
-        {"name": "gemini-2.5-pro", "url_template": "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"},
         {"name": "gemini-2.5-flash", "url_template": "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"},
     ]
     
@@ -129,11 +128,11 @@ class GeminiAI:
         return model["url_template"].format(model=model["name"], api_key=self.api_key)
     
     def should_call_api(self) -> bool:
-        """Rate limiting for free tier."""
+        """Rate limiting for free tier (5 req/min for flash)."""
         import time
         now = time.time()
-        # Max 15 calls per minute on free tier (be conservative: 10/min)
-        if now - self.last_call_time < 6:  # Wait 6 seconds between calls
+        # 5 requests per minute = 1 request every 12 seconds
+        if now - self.last_call_time < 12:
             return False
         return True
     
