@@ -87,9 +87,22 @@ class GeminiAI:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        self.last_decision = None
+        self.same_decision_count = 0
+        self.cache_duration = 30  # Cache decisions for 30 seconds
+        self.last_call_time = 0
+    
+    def should_call_api(self) -> bool:
+        """Rate limiting for free tier."""
+        import time
+        now = time.time()
+        # Max 15 calls per minute on free tier (be conservative: 10/min)
+        if now - self.last_call_time < 6:  # Wait 6 seconds between calls
+            return False
+        return True
     
     def decide(self, market_data: dict, portfolio: Portfolio) -> str:
-        """Get trading decision from Gemini."""
+        """Get trading decision from Gemini with caching."""
         
         prompt = f"""You are a trading expert for Polymarket's 5-minute Bitcoin prediction markets.
 
@@ -299,8 +312,21 @@ class PolymarketBot:
         
         # Get AI decision if available
         if self.ai:
-            decision = self.ai.decide(market_data, self.portfolio)
-            logger.info(f"AI Decision: {decision}")
+            # Try Gemini with fallback to heuristic
+            try:
+                decision = self.ai.decide(market_data, self.portfolio)
+                logger.info(f"AI Decision: {decision}")
+            except Exception as e:
+                logger.warning(f"AI error, using heuristic: {e}")
+                # Fallback heuristic
+                up_price = market_data.get('up_price', 0.5)
+                if up_price < 0.42:
+                    decision = 'BUY_UP'
+                elif up_price > 0.58:
+                    decision = 'BUY_DOWN'
+                else:
+                    decision = 'NO_TRADE'
+                logger.info(f"Heuristic Decision: {decision}")
         else:
             # Simple heuristic if no AI
             if market_data.get('up_price', 0.5) < 0.45:
