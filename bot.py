@@ -26,8 +26,32 @@ logger = logging.getLogger(__name__)
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_HOST = "https://clob.polymarket.com"
 
-# Default market for 5-min BTC
-DEFAULT_MARKET_SLUG = "btc-updown-5m-1771113600"
+def get_current_market_slug() -> str:
+    """Calculate the current 5-min BTC market slug based on system time."""
+    import calendar
+    from datetime import datetime, timedelta, timezone
+    
+    now = datetime.now(timezone.utc)
+    
+    # Round UP to next 5-minute interval
+    minutes = now.minute
+    seconds = now.second
+    remainder = (minutes * 60 + seconds) % 300
+    if remainder > 0:
+        # Round up to next 5-min mark
+        next_5min = now + timedelta(seconds=(300 - remainder))
+    else:
+        next_5min = now
+    
+    # Round to exact 5 min boundary
+    minutes_rounded = (next_5min.minute // 5) * 5
+    next_5min = next_5min.replace(minute=minutes_rounded, second=0, microsecond=0)
+    
+    timestamp = int(calendar.timegm(next_5min.timetuple()))
+    return f"btc-updown-5m-{timestamp}"
+
+# Default market for 5-min BTC (calculated dynamically)
+DEFAULT_MARKET_SLUG = get_current_market_slug()
 
 
 class Portfolio:
@@ -177,7 +201,9 @@ class PolymarketBot:
     
     def __init__(self, config: dict):
         self.config = config
-        self.market_slug = config.get('market_slug', DEFAULT_MARKET_SLUG)
+        # Always use current market (not from config) to ensure we start with the active window
+        self.market_slug = get_current_market_slug()
+        logger.info(f"Starting with current market: {self.market_slug}")
         self.paper_trading = config.get('paper_trading', True)
         self.max_bet_pct = config.get('max_bet_pct', 0.1)
         
