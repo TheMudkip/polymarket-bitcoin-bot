@@ -109,13 +109,24 @@ class Portfolio:
 class GeminiAI:
     """Gemini-powered decision maker."""
     
+    # Model configurations - try Pro first, then Flash
+    MODELS = [
+        {"name": "gemini-2.5-pro", "url_template": "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"},
+        {"name": "gemini-2.0-flash", "url_template": "https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"},
+    ]
+    
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        self.current_model_index = 0  # Start with first model (Pro)
         self.last_decision = None
         self.same_decision_count = 0
         self.cache_duration = 30  # Cache decisions for 30 seconds
         self.last_call_time = 0
+    
+    def get_current_url(self):
+        """Get the URL for the current model."""
+        model = self.MODELS[self.current_model_index]
+        return model["url_template"].format(model=model["name"], api_key=self.api_key)
     
     def should_call_api(self) -> bool:
         """Rate limiting for free tier."""
@@ -164,37 +175,57 @@ NO_TRADE
 
 Your decision:"""
 
-        try:
-            response = requests.post(
-                self.url,
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {
-                        "temperature": 0.3,
-                        "maxOutputTokens": 50
-                    }
-                },
-                headers={"Content-Type": "application/json"}
-            )
+        # Try models in order (Pro first, then Flash)
+        for model_index in range(len(self.MODELS)):
+            self.current_model_index = model_index
+            url = self.get_current_url()
+            model_name = self.MODELS[model_index]["name"]
             
-            if response.status_code == 200:
-                result = response.json()
-                text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '').strip()
+            try:
+                response = requests.post(
+                    url,
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {
+                            "temperature": 0.3,
+                            "maxOutputTokens": 50
+                        }
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
                 
-                # Parse response
-                if 'BUY_UP' in text.upper():
-                    return 'BUY_UP'
-                elif 'BUY_DOWN' in text.upper():
-                    return 'BUY_DOWN'
+                if response.status_code == 200:
+                    result = response.json()
+                    text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '').strip()
+                    
+                    # Parse response
+                    if 'BUY_UP' in text.upper():
+                        logger.info(f"Gemini ({model_name}) decision: BUY_UP")
+                        return 'BUY_UP'
+                    elif 'BUY_DOWN' in text.upper():
+                        logger.info(f"Gemini ({model_name}) decision: BUY_DOWN")
+                        return 'BUY_DOWN'
+                    else:
+                        logger.info(f"Gemini ({model_name}) decision: NO_TRADE")
+                        return 'NO_TRADE'
+                elif response.status_code == 429:
+                    # Rate limited - try next model
+                    logger.warning(f"Gemini ({model_name}) rate limited, trying next model...")
+                    continue
                 else:
-                    return 'NO_TRADE'
-            else:
-                logger.error(f"Gemini API error: {response.status_code}")
-                raise Exception(f"Gemini API error: {response.status_code}")
-                
-        except Exception as e:
-            logger.error(f"Error calling Gemini: {e}")
-            raise
+                    logger.error(f"Gemini API error ({model_name}): {response.status_code}")
+                    if model_index < len(self.MODELS) - 1:
+                        continue  # Try next model
+                    raise Exception(f"Gemini API error: {response.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"Error calling Gemini ({model_name}): {e}")
+                if model_index < len(self.MODELS) - 1:
+                    continue  # Try next model
+                raise
+        
+        # All models failed
+        raise Exception("All Gemini models failed")
 
 
 class PolymarketBot:
