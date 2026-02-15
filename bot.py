@@ -245,6 +245,19 @@ class PolymarketBot:
         
         # Market data cache
         self.market_data = {}
+        
+        # Price history for trend tracking
+        self.price_history = []  # list of {'timestamp': ts, 'up_price': float}
+        
+        # Trading state for current interval
+        self.traded_this_interval = False
+        self.pending_decision = None  # 'BUY_UP', 'BUY_DOWN', or None
+        self.confirmation_cycle_count = 0  # Cycles spent in pending state
+        
+        # Config
+        self.confirmation_wait_cycles = 6  # Wait ~1 minute (6 cycles at 10s) before confirming
+        self.threshold_high = 0.60  # Buy UP when up_price > 60%
+        self.threshold_low = 0.40   # Buy DOWN when up_price < 40%
     
     def get_next_market_slug(self, current_slug: str) -> str:
         """Calculate next 5-min BTC market slug."""
@@ -422,6 +435,10 @@ class PolymarketBot:
             if next_slug:
                 logger.info(f"Switching to: {next_slug}")
                 self.market_slug = next_slug
+                self.traded_this_interval = False  # Reset for new interval
+                self.pending_decision = None
+                self.confirmation_cycle_count = 0
+                self.price_history = []
                 # Save to config
                 self.config['market_slug'] = next_slug
                 import json
@@ -435,15 +452,56 @@ class PolymarketBot:
         logger.info(f"Market: {market_data.get('question', '')[:50]}...")
         logger.info(f"  Up: ${market_data.get('up_price', 0):.4f} | Down: ${market_data.get('down_price', 0):.4f}")
         
-        # Use heuristic for trading decision (AI disabled)
+        # Track price history
+        import time
+        current_ts = int(time.time())
         up_price = market_data.get('up_price', 0.5)
-        if up_price < 0.40:
-            decision = 'BUY_UP'
-        elif up_price > 0.60:
-            decision = 'BUY_DOWN'
-        else:
+        self.price_history.append({'timestamp': current_ts, 'up_price': up_price})
+        
+        # Keep only last 3 minutes of history
+        self.price_history = [p for p in self.price_history if current_ts - p['timestamp'] < 180]
+        
+        # Check if we already traded this interval
+        if self.traded_this_interval:
+            logger.info(f"Already traded this interval, skipping")
             decision = 'NO_TRADE'
-        logger.info(f"Decision (heuristic): {decision}")
+        else:
+            # Heuristic: Buy UP when up_price > 60%, Buy DOWN when up_price < 40%
+            # Wait for confirmation: price must stay in zone for confirmation_wait_cycles
+            if up_price > self.threshold_high:
+                if self.pending_decision != 'BUY_UP':
+                    self.pending_decision = 'BUY_UP'
+                    self.confirmation_cycle_count = 1
+                    logger.info(f"Up price {up_price*100:.1f}% > {self.threshold_high*100:.0f}% - waiting for confirmation...")
+                    decision = 'NO_TRADE'
+                elif self.confirmation_cycle_count >= self.confirmation_wait_cycles:
+                    logger.info(f"Confirmed: Up price stayed above {self.threshold_high*100:.0f}% for {self.confirmation_cycle_count} cycles")
+                    decision = 'BUY_UP'
+                else:
+                    logger.info(f"Waiting for confirmation: {self.confirmation_cycle_count}/{self.confirmation_wait_cycles} cycles")
+                    self.confirmation_cycle_count += 1
+                    decision = 'NO_TRADE'
+            elif up_price < self.threshold_low:
+                if self.pending_decision != 'BUY_DOWN':
+                    self.pending_decision = 'BUY_DOWN'
+                    self.confirmation_cycle_count = 1
+                    logger.info(f"Up price {up_price*100:.1f}% < {self.threshold_low*100:.0f}% - waiting for confirmation...")
+                    decision = 'NO_TRADE'
+                elif self.confirmation_cycle_count >= self.confirmation_wait_cycles:
+                    logger.info(f"Confirmed: Up price stayed below {self.threshold_low*100:.0f}% for {self.confirmation_cycle_count} cycles")
+                    decision = 'BUY_DOWN'
+                else:
+                    logger.info(f"Waiting for confirmation: {self.confirmation_cycle_count}/{self.confirmation_wait_cycles} cycles")
+                    self.confirmation_cycle_count += 1
+                    decision = 'NO_TRADE'
+            else:
+                # Price is in neutral zone (40-60%)
+                self.pending_decision = None
+                self.confirmation_cycle_count = 0
+                decision = 'NO_TRADE'
+                logger.info(f"Price in neutral zone (40-60%), no trade")
+        
+        logger.info(f"Decision: {decision}")
         
         # Execute trade
         if decision == 'BUY_UP':
@@ -452,14 +510,20 @@ class PolymarketBot:
             max_bet = self.portfolio.get_max_bet(self.max_bet_pct)
             # Calculate shares we can buy
             amount = max_bet / price if price > 0 else 0
-            self.execute_trade('BUY_UP', token_id, price, amount)
+            success = self.execute_trade('BUY_UP', token_id, price, amount)
+            if success:
+                self.traded_this_interval = True
+                logger.info(f"Trade executed - won't trade again until next interval")
             
         elif decision == 'BUY_DOWN':
             token_id = market_data['down_token']
             price = market_data['down_price']
             max_bet = self.portfolio.get_max_bet(self.max_bet_pct)
             amount = max_bet / price if price > 0 else 0
-            self.execute_trade('BUY_DOWN', token_id, price, amount)
+            success = self.execute_trade('BUY_DOWN', token_id, price, amount)
+            if success:
+                self.traded_this_interval = True
+                logger.info(f"Trade executed - won't trade again until next interval")
         
         logger.info(f"Cycle complete. {str(self.portfolio)}")
         return True
