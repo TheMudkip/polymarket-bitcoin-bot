@@ -33,21 +33,22 @@ def get_current_market_slug() -> str:
     
     now = datetime.now(timezone.utc)
     
-    # Round UP to next 5-minute interval
+    # Round DOWN to current 5-minute interval (the active market)
     minutes = now.minute
     seconds = now.second
-    remainder = (minutes * 60 + seconds) % 300
-    if remainder > 0:
-        # Round up to next 5-min mark
-        next_5min = now + timedelta(seconds=(300 - remainder))
-    else:
-        next_5min = now
     
-    # Round to exact 5 min boundary
-    minutes_rounded = (next_5min.minute // 5) * 5
-    next_5min = next_5min.replace(minute=minutes_rounded, second=0, microsecond=0)
+    # Current 5-min window started at this minute
+    current_5min = now - timedelta(minutes=minutes % 5, seconds=seconds)
+    current_5min = current_5min.replace(second=0, microsecond=0)
     
-    timestamp = int(calendar.timegm(next_5min.timetuple()))
+    # Get the timestamp for this window (market ends at this time)
+    timestamp = int(calendar.timegm(current_5min.timetuple()))
+    
+    logger.info(f"Current time: {now.strftime('%H:%M:%S UTC')}")
+    logger.info(f"Current 5-min window started: {current_5min.strftime('%H:%M UTC')}")
+    logger.info(f"Market slug: btc-updown-5m-{timestamp}")
+    logger.info(f"URL: https://polymarket.com/event/btc-updown-5m-{timestamp}")
+    
     return f"btc-updown-5m-{timestamp}"
 
 # Default market for 5-min BTC (calculated dynamically)
