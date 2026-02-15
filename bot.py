@@ -271,14 +271,14 @@ class PolymarketBot:
             best_bid = float(market.get('bestBid', 0))
             best_ask = float(market.get('bestAsk', 0))
             
-            # Use outcomePrices as the primary probability (more accurate)
-            if len(outcome_prices) > 0:
-                up_price = float(outcome_prices[0])
-                logger.info(f"Outcome prices from API: Up={float(outcome_prices[0])*100:.1f}%, Down={float(outcome_prices[1])*100:.1f}%")
-            elif best_bid > 0 and best_ask > 0:
-                # Fallback to best bid/ask
+            # Use best bid/ask as primary (more reliable than outcomePrices which can be stale at 50.5%)
+            if best_bid > 0 and best_ask > 0:
                 up_price = (best_bid + best_ask) / 2
-                logger.info(f"Prices from bestBid/Ask: Up={up_price*100:.1f}%")
+                logger.info(f"Prices from bestBid/Ask: Up={up_price*100:.1f}%, Down={(1-up_price)*100:.1f}% (bid={best_bid}, ask={best_ask})")
+            elif len(outcome_prices) > 0:
+                # Fallback to outcomePrices if no bid/ask
+                up_price = float(outcome_prices[0])
+                logger.info(f"Outcome prices from API: Up={up_price*100:.1f}%")
             else:
                 up_price = 0.5
                 logger.warning("No price data available, defaulting to 50%")
